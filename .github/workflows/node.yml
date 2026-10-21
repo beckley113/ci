@@ -1,0 +1,76 @@
+# Reusable CI for Node/TypeScript repos.
+#
+# Each step runs `npm run <script> --if-present`, so a repo only gets the
+# checks it defines. Standard script names:
+#   typecheck     tsc --noEmit (and any extra tsconfigs)
+#   lint          eslint
+#   format:check  prettier --check .
+#   test          unit tests
+#   build         production build
+name: Node CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version, or leave empty to use .nvmrc / .node-version / 22.
+        type: string
+        default: ""
+      build:
+        description: Run `npm run build`. Turn off for repos whose build needs secrets.
+        type: boolean
+        default: true
+      build-env:
+        description: Extra KEY=value lines exported before the build (non-secret placeholders only).
+        type: string
+        default: ""
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick Node version
+        id: node
+        env:
+          NODE_VERSION: ${{ inputs.node-version }}
+        run: |
+          if [ -n "$NODE_VERSION" ]; then v="$NODE_VERSION"
+          elif [ -f .nvmrc ]; then v="$(cat .nvmrc)"
+          elif [ -f .node-version ]; then v="$(cat .node-version)"
+          else v=22; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Format
+        run: npm run format:check --if-present
+
+      - name: Test
+        run: npm run test --if-present
+
+      - name: Build
+        if: inputs.build
+        run: |
+          if [ -n "$BUILD_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$BUILD_ENV"
+          fi
+          npm run build --if-present
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
